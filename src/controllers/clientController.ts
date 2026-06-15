@@ -223,8 +223,6 @@ export class ClientController {
                 ...r,
                 isOpen: getRestaurantStatus(r.workHours || [])
             }))
-            console.log(name)
-            console.log(restaurantList)
             await queryRunner.commitTransaction()
             res.status(200).json(restaurants)
         } catch (error) {

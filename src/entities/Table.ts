@@ -12,7 +12,7 @@ export class Table {
     tableNumber!: string
 
     @Column({nullable: true})
-    photoName!: string
+    photoName!: string | null
 
     @Column()
     maxGuests!: number

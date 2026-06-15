@@ -7,13 +7,14 @@ const authController = new AuthController()
 
 const router = Router();
 
-// Логин через Google
-router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+router.get("/yandex", passport.authenticate("yandex", {
+       scope: ["login:email", "login:info"],
+    }));
 
 // Callback после авторизации
-router.get("/google/callback", 
-    passport.authenticate("google", { failureRedirect: "/" }),
-    authController.googleAuthCallback
+router.get("/yandex/callback", 
+    passport.authenticate("yandex", { failureRedirect: "/" }),
+    authController.yandexAuthCallback
 );
 
 router.post("/login", authController.login); // Авторизация администратора ресторана DONE

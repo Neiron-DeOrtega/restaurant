@@ -21,7 +21,7 @@ export class User {
     role!: string
 
     @Column({ length: 255, unique: true, nullable: true })
-    googleId!: string
+    yandexId!: string
 
     @OneToMany(() => Restaurant, (restaurant) => restaurant.user, {nullable: true})
     restaurant!: Restaurant[]

@@ -20,7 +20,7 @@ class ModController {
         const queryRunner = AppDataSource.createQueryRunner()
         await queryRunner.startTransaction()
         try {
-            const {tableNumber, startTime, endTime, guestName, guestEmail} = req.body
+            const {tableNumber, startTime, endTime, guestName, guestEmail, guestsNumber, notes} = req.body
             const {id} = req.params
 
             if (!tableNumber || !startTime || !endTime || !guestName || !guestEmail) {
@@ -40,7 +40,7 @@ class ModController {
 
             const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-            if (emailRegex.test(guestEmail)) {
+            if (!emailRegex.test(guestEmail)) {
                 res.status(400).json({ message: 'Некорректный формат почты' })
                 return
             }
@@ -70,12 +70,21 @@ class ModController {
                 return
             }
 
+            const restaurant = await queryRunner.manager.findOne(Restaurant, {
+                where: {
+                    id: id
+                }
+            })
+
             const newReservation = new Reservation()
             newReservation.table = table
             newReservation.startTime = new Date(startTime)
             newReservation.endTime = new Date(endTime)
             newReservation.guestName = guestName
             newReservation.guestEmail = guestEmail
+            newReservation.guestsNumber = guestsNumber
+            newReservation.notes = notes
+            newReservation.restaurant = restaurant
 
             await queryRunner.manager.save(newReservation)
 
@@ -135,7 +144,7 @@ class ModController {
         const queryRunner = AppDataSource.createQueryRunner()
         await queryRunner.startTransaction()
         try {
-            let {tableNumber, startTime, endTime, guestName, guestEmail} = req.body
+            let {tableNumber, startTime, endTime, guestName, guestEmail, guestsNumber, notes} = req.body
             const {id, rid} = req.params
             let restaurantId = id
             let reserveId = Number(rid)
@@ -182,6 +191,12 @@ class ModController {
             if (guestName) {
                 reservation.guestName = guestName
             }
+            if (guestsNumber) {
+                reservation.guestsNumber = guestsNumber
+            }
+            if (notes) {
+                reservation.notes = notes
+            }
 
             const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
             if (guestEmail && !emailRegex.test(guestEmail)) {
@@ -221,7 +236,7 @@ class ModController {
                     },
                     date: date
                 },
-                relations: ['restaurant']
+                relations: ['restaurant', 'table']
             })
 
             if (!reservations) {
@@ -250,8 +265,6 @@ class ModController {
                 restaurant: r.restaurant,
                 notes: r.notes
             }));
-
-            console.log(result)
             
             res.status(200).json({ reservations: result });
                        
@@ -276,26 +289,26 @@ class ModController {
             })
             console.log(user)
             const restaurant = await queryRunner.manager.findOne(Restaurant, {
-                where: {
-                    user
-                },
-                relations: [
-                    "address",
-                    "workHours",
-                    "menu",
-                    "tables",
-                    "contacts"
-                ]
-            })
+                where: { user },
+                relations: ['address', 'workHours', 'menu', 'tables', 'contacts']
+            });
+
             if (!restaurant) {
-                res.status(404).send({
-                    message: "Ресторана под этим пользователем не существует"
-                })
-                return
+                res.status(404).send({ message: "Ресторана под этим пользователем не существует" });
+                return;
             }
-            await queryRunner.commitTransaction()
-            res.status(200).send(restaurant)
-            return
+
+            if (restaurant.workHours && restaurant.workHours.length > 0) {
+                restaurant.workHours.sort((a, b) => {
+                    const dayA = a.weekDay === 0 ? 7 : a.weekDay;
+                    const dayB = b.weekDay === 0 ? 7 : b.weekDay;
+                    return dayA - dayB;
+                });
+            }
+
+            await queryRunner.commitTransaction();
+            res.status(200).send(restaurant);
+            return;
         } catch (error) {
             await queryRunner.rollbackTransaction()
             res.status(400).send(error)
@@ -318,13 +331,13 @@ class ModController {
                 res.status(400).json({ message: 'Все поля обязательны для заполнения' })
                 return
             }
-            const parsedUserInfo = JSON.parse(userInfo)
+            // const parsedUserInfo = JSON.parse(userInfo)
             const parsedAddress = JSON.parse(address)
             const parsedContacts = JSON.parse(contacts)
             const parsedWorkHoursInfo = JSON.parse(workHoursInfo)
 
             const user = await queryRunner.manager.findOne(User, {
-                where: { id: Number(parsedUserInfo.id) }
+                where: { id: Number(userInfo.id) }
             })
 
             if (!parsedAddress?.city || !parsedAddress?.street || !parsedAddress?.region || !parsedAddress?.house ) {
@@ -410,14 +423,18 @@ class ModController {
         await queryRunner.startTransaction()
         try {
             const { id } = req.params; // ID ресторана
-            const { name, address, workHoursInfo, contacts, description } = req.body;
+            const { name, description } = req.body;
 
             const logo = req.files?.['logo'] ? req.files['logo'][0] : null;
             const menu = req.files?.['menu'] ? req.files['menu'] : [];
 
+            const address = req.body.address ? JSON.parse(req.body.address) : undefined;
+            const contacts = req.body.contacts ? JSON.parse(req.body.contacts) : undefined;
+            const workHoursInfo = req.body.workHoursInfo ? JSON.parse(req.body.workHoursInfo) : undefined;
+
             const restaurant = await queryRunner.manager.findOne(Restaurant, {
                 where: { id: id },
-                relations: ['menu', 'workHours', 'workHours.breakTime', 'contacts'],
+                relations: ['menu', 'workHours', 'contacts'],
             })
 
             if (!restaurant) {
@@ -465,27 +482,28 @@ class ModController {
 
             if (menu && menu.length > 0) {
                 const existingMenu = await queryRunner.manager.find(Menu, {
-                    where: {
-                        restaurant: {
-                            id: id
-                        }
-                    }
-                })
+                    where: { restaurant: { id: id } }
+                });
 
                 if (existingMenu) {
                     existingMenu.forEach((item) => {
-                        if (fs.existsSync(`${__dirname}/../../public/img/${item.imageName}`)) {
-                            fs.unlinkSync(`${__dirname}/../../public/img/${item.imageName}`)
+                        const filePath = `${__dirname}/../../public/img/${item.imageName}`;
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath); 
                         }
-                    })
+                    });
+
+                    await queryRunner.manager.remove(existingMenu);
                 }
+
                 const menuArray = menu.map((item) => {
-                    const newMenu = new Menu()
-                    newMenu.imageName = item.filename
-                    newMenu.restaurant = restaurant
-                    return newMenu
-                })
-                await queryRunner.manager.save(menuArray)
+                    const newMenu = new Menu();
+                    newMenu.imageName = item.filename; 
+                    newMenu.restaurant = restaurant;
+                    return newMenu;
+                });
+
+                await queryRunner.manager.save(menuArray);
             }
             
                 if (workHoursInfo) {
@@ -664,6 +682,8 @@ class ModController {
             const restaurantId = id
             const tableId = parseInt(tid);
 
+            console.log(req.file)
+
             const image = req.file
 
             if (isNaN(tableId)) {
@@ -690,15 +710,17 @@ class ModController {
             if (notes !== undefined) table.notes = notes || null
 
             if (image) {
-                const filePath = path.join(__dirname, '..', '..', 'public', 'img', table.photoName)
-                try {
-                    await fs.promises.access(filePath, fs.constants.F_OK)
+                if (table.photoName) {
+                    const filePath = path.join(__dirname, '..', '..', 'public', 'img', table.photoName)
+                    try {
+                        await fs.promises.access(filePath, fs.constants.F_OK)
 
-                    await fs.promises.unlink(filePath)
-                } catch (error) {
-                    console.error(error)
-                    res.status(500).send({ error: "Ошибка при удалении старой фотографии стола" })
-                    return
+                        await fs.promises.unlink(filePath)
+                    } catch (error) {
+                        console.error(error)
+                        res.status(500).send({ error: "Ошибка при удалении старой фотографии стола" })
+                        return
+                    }
                 }
 
                 table.photoName = image.filename

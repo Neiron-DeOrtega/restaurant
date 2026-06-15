@@ -18,6 +18,7 @@ import modRouter from "./routers/modRouter";
 import { AppDataSource } from "./data-source";
 import cors from 'cors'
 import { join } from 'path';
+import { startCleanupCron } from "./cron/cleanupReservations";
 
 const app = express();
 
@@ -29,7 +30,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(session({ secret: process.env.JWT_SECRET!, resave: false, saveUninitialized: false }));
 app.use(passport.initialize());
 app.use(passport.session());
-app.use(cors())
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true, 
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+}));
+
 
 initOAuth();
 
@@ -54,3 +60,4 @@ AppDataSource.initialize()
     process.exit(1);
   })
 
+startCleanupCron()

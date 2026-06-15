@@ -179,56 +179,61 @@ export class AuthController {
         }
     }
 
-    public async googleAuthCallback(req: Request, res: Response): Promise<void> {
+    public yandexAuthCallback = async (req: Request, res: Response): Promise<void> => {
         const profile = (req.user as any)?.profile;
 
         if (!profile) {
-            res.status(400).json({ message: 'Не удалось получить профиль от Google' });
+            res.status(400).json({ message: "Не удалось получить профиль от провайдера" });
             return;
         }
 
-        const email = profile.emails?.[0]?.value;
-        const googleId = profile.id;
-        const displayName = profile.displayName || 'Google User';
+        const email = (profile.default_email || profile.emails?.[0])?.trim().toLowerCase();
+        const providerId = profile.id;
+        const displayName = profile.first_name && profile.last_name 
+            ? `${profile.first_name} ${profile.last_name}`.trim()
+            : profile.display_name || profile.login || "Яндекс Пользователь";
 
-        if (!email || !googleId) {
-            res.status(400).json({ message: 'Google не предоставил email или ID' });
+        if (!email || !providerId) {
+            res.status(400).json({ message: "Провайдер не предоставил email или ID" });
             return;
         }
-
-        const trimmedEmail = email.trim().toLowerCase();
 
         const queryRunner = AppDataSource.createQueryRunner();
         await queryRunner.startTransaction();
 
         try {
+            // Ищем пользователя: по Яндекс-ID или по email (для связки аккаунтов)
             let user = await queryRunner.manager.findOne(User, {
-            where: [{ googleId }, { email: trimmedEmail }],
+                where: [{ yandexId: providerId }, { email }],
             });
 
             if (!user) {
                 user = new User();
                 user.name = displayName;
-                user.email = trimmedEmail;
-                user.googleId = googleId;
-
-            await queryRunner.manager.save(user);
+                user.email = email;
+                user.yandexId = providerId; // ← Новое поле, см. миграцию ниже
+                await queryRunner.manager.save(user);
             } else {
-            if (!user.googleId) {
-                user.googleId = googleId;
+            // Обновляем привязку, если пользователь зарегистрирован по email
+            if (!user.yandexId) {
+                user.yandexId = providerId;
                 await queryRunner.manager.save(user);
             }
+            // Обновляем имя, если изменилось в Яндекс.Паспорте
             if (user.name !== displayName) {
                 user.name = displayName;
                 await queryRunner.manager.save(user);
             }
             }
 
+            // Генерируем наш JWT (как было, для совместимости с фронтом)
             const token = jwt.sign(
-            { id: user.id, name: user.name, email: user.email, role: user.role },
-            process.env.JWT_SECRET!,
-            { expiresIn: '7d' }
+                { id: user.id, name: user.name, email: user.email, role: user.role },
+                process.env.JWT_SECRET!,
+                { expiresIn: "7d" }
             );
+
+            console.log(user.role)
 
             const safeUser = {
                 id: user.id,
@@ -238,16 +243,18 @@ export class AuthController {
 
             const frontendUrl = process.env.FRONTEND_URL;
             const userJson = encodeURIComponent(JSON.stringify(safeUser));
-            res.redirect(`${frontendUrl}/#token=${token}&user=${userJson}`);
-
+            
             await queryRunner.commitTransaction();
-            // res.status(200).json({ user: safeUser, token });
+            
+            // Редирект на фронт с токеном (как было)
+            res.redirect(`${frontendUrl}/#token=${token}&user=${userJson}`);
+            
         } catch (error) {
             await queryRunner.rollbackTransaction();
-            console.error('Ошибка при обработке Google-авторизации:', error);
-            res.status(500).json({ message: 'Внутренняя ошибка сервера' });
+            console.error("Ошибка при обработке OAuth-авторизации:", error);
+            res.status(500).json({ message: "Внутренняя ошибка сервера" });
         } finally {
             await queryRunner.release();
         }
-    }
+    };
 }
