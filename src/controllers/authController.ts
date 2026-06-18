@@ -233,8 +233,6 @@ export class AuthController {
                 { expiresIn: "7d" }
             );
 
-            console.log(user.role)
-
             const safeUser = {
                 id: user.id,
                 name: user.name,

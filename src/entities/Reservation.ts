@@ -31,6 +31,9 @@ export class Reservation {
     @Column({nullable: true})
     notes!: string
 
+    @Column({default: 'pending'})
+    status!: 'pending' | 'confirmed' | 'cancelled'
+
     @ManyToOne(() => Restaurant, (restaurant) => restaurant.reservations)
     restaurant!: Restaurant
 

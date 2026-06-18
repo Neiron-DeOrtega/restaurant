@@ -1,17 +1,20 @@
 import {Request, Response} from 'express'
-import { User } from '../entities/User'
 import { AppDataSource } from '../data-source'
 import { Restaurant } from '../entities/Restaurant'
 import { Table } from '../entities/Table'
 import { Reservation } from '../entities/Reservation'
-import { Between, ILike, LessThan, MoreThan } from 'typeorm'
+import { ILike, LessThan, MoreThan } from 'typeorm'
 import { getRestaurantStatus } from '../services/getRestaurantStatus'
+import { emailService } from '../services/emailService'
+const jwt = require('jsonwebtoken')
 
 export class ClientController {
     public async reserveTable(req: Request, res: Response): Promise<void> {
-        const queryRunner = AppDataSource.createQueryRunner();
-        await queryRunner.startTransaction();
+        const queryRunner = AppDataSource.createQueryRunner()
+        await queryRunner.connect();
+        let isCommitted = false;
         try {
+            await queryRunner.startTransaction();
             const { tableNumber, startTime, endTime, guestName, guestEmail, guestsNumber, notes } = req.body;
             const { id } = req.params;
     
@@ -111,6 +114,7 @@ export class ClientController {
             }
     
             const newReservation = new Reservation();
+
             newReservation.table = table;
             newReservation.startTime = startDateTime;
             newReservation.endTime = endDateTime;
@@ -122,7 +126,21 @@ export class ClientController {
     
             await queryRunner.manager.save(newReservation);
             await queryRunner.commitTransaction();
-    
+            isCommitted = true
+
+            emailService.sendReservationConfirmation(guestEmail, {
+                reservationId: newReservation.id!.toString(),
+                guestName: guestName,
+                date: startDateTime.toLocaleDateString('ru-RU'),
+                time: startDateTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                endTime: endDateTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                tableNumber: table.tableNumber || 'N/A',
+                guestsNumber: guestsNumber,
+                restaurantName: restaurant.name
+            }).catch((error) => {
+                console.error('❌ Ошибка отправки письма подтверждения:', error.message);
+            });
+
             const reserveResponse = {
                 id: newReservation.id,
                 tableNumber: tableNumber,
@@ -131,13 +149,42 @@ export class ClientController {
                 guestsNumber: guestsNumber
             };
     
-            res.status(201).json({ reservation: reserveResponse, message: "Бронь успешно создана" });
+            res.status(201).json({ reservation: reserveResponse, message: "Бронь успешно создана, требуется подтверждение по почте" });
         } catch (error) {
-            await queryRunner.rollbackTransaction();
+            if (!isCommitted) {
+                await queryRunner.rollbackTransaction();
+            }
             console.error(error);
             res.status(500).json({ message: 'Ошибка при создании бронирования' });
         } finally {
             await queryRunner.release();
+        }
+    }
+
+    public async confirmReservation(req: Request, res: Response): Promise<void> {
+        const token = req.query.token as string;
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+        if (!token) return res.redirect(`${baseUrl}/booking?error=missing_token`);
+
+        try {
+            const payload = jwt.verify(token, process.env.JWT_SECRET!) as { reservationId: string };
+            
+            const repo = AppDataSource.getRepository(Reservation);
+            const reservation = await repo.findOne({ where: { id: Number(payload.reservationId) } });
+
+            if (!reservation) return res.redirect(`${baseUrl}/booking?error=not_found`);
+            if (reservation.status !== 'pending') return res.redirect(`${baseUrl}/booking?error=already_confirmed`);
+
+            reservation.status = 'confirmed';
+            await repo.save(reservation);
+
+            return res.redirect(`${baseUrl}/booking?success=true`);
+        } catch (error) {
+            console.error()
+            res.status(500).json({ message: 'Ошибка при создании бронирования' });
+        } finally {
+
         }
     }
 
@@ -166,7 +213,8 @@ export class ClientController {
 
             const whereCondition: any = {
                 date: String(date),
-                restaurant: { id: id }
+                restaurant: { id: id },
+                status: 'confirmed'
             }
 
             if (tableId) {
@@ -178,10 +226,6 @@ export class ClientController {
                 relations: ['table', 'restaurant'] // Подтягиваем связанные сущности
             })
 
-            // if (reservations.length === 0) {
-            //     res.status(404).json({ message: "Бронирований на эту дату не найдено" })
-            //     return
-            // }
 
             await queryRunner.commitTransaction()
 

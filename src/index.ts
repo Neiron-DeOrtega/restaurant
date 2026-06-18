@@ -39,10 +39,8 @@ app.use(cors({
 
 initOAuth();
 
-// Роуты авторизации
 app.use("/api/auth", authRouter);
 
-// Существующие API маршруты
 app.use("/api/admin", adminRouter);
 app.use("/api/mod", modRouter);
 app.use("/api", clientRouter);

@@ -12,5 +12,6 @@ clientRouter.get("/restaurant/:id", clientController.getRestaurantInfo); // Ин
 // Роуты для бронирования столов
 clientRouter.post("/:id/reservations", clientController.reserveTable); // Бронирование стола DONE
 clientRouter.get("/:id/reservations", clientController.getReservationsByDateAndTable); // Получение бронирований на дату по столу DONE
+clientRouter.get("/confirm", clientController.confirmReservation) // Подтверждение брони
 
 export default clientRouter;
